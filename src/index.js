@@ -9,7 +9,7 @@ const preKernel = (inputs) => {
     out float out_data;
 
     float read(in sampler2D data, int idx) {
-        return texture(data, vec2(float(float(int(idx)%textureSize(data, 0).x) + 0.5f)/float(textureSize(data, 0).x), float(float(int(idx)/textureSize(data, 0).x) + 0.5f)/float(textureSize(data0, 0).y))).r;
+        return texture(data, vec2(float(float(int(idx)%textureSize(data, 0).x) + 0.5f)/float(textureSize(data, 0).x), float(float(int(idx)/textureSize(data, 0).x) + 0.5f)/float(textureSize(data, 0).y))).r;
     }`
 }
 
