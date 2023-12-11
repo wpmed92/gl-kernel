@@ -1,22 +1,26 @@
 const gl = document.createElement("canvas").getContext("webgl2");
-const preKernel = `#version 300 es
+const preKernel = (inputs) => {
+    const uniforms = inputs.map((_, i) => `uniform sampler2D data${i};\n`).join("");
+    return `#version 300 es
     precision highp float;
     in vec2 uv;
     uniform int w;
-    uniform sampler2D data0;
-    uniform sampler2D data1;
+    ${uniforms}
     out float out_data;
 
     float read(in sampler2D data, int idx) {
         return texture(data, vec2(float(float(int(idx)%textureSize(data, 0).x) + 0.5f)/float(textureSize(data, 0).x), float(float(int(idx)/textureSize(data, 0).x) + 0.5f)/float(textureSize(data0, 0).y))).r;
-    }
-`
-const postKernel = `
-    void main() {
+    }`
+}
+
+const postKernel = (inputs) => {
+    const inputData = inputs.map((_, i) => `data${i},`).join("");
+    return `void main() {
         int idx0 = int(gl_FragCoord.y-0.5f) * w + int(gl_FragCoord.x-0.5f);
-        out_data = compute(data0, data1, idx0);
+        out_data = compute(${inputData} idx0);
     }
-`
+    `
+}
 
 const createShaderProgram = (code) => {
     const vertexShader = loadShader(gl.VERTEX_SHADER, '#version 300 es\nin vec2 in_position;in vec2 in_uv;out vec2 uv;void main(){gl_Position=vec4(in_position,0.0,1.0);uv=in_uv;}');
@@ -144,7 +148,8 @@ const createTexture = (buf) => {
 export const glKernel = {
     compute: (code, inputBufs, outputBuf) => {
         const ext = gl.getExtension('EXT_color_buffer_float');
-        const program = createShaderProgram(preKernel + code.code + postKernel.replace("compute", code.entry));
+        console.log(preKernel(inputBufs) + code.code + postKernel(inputBufs).replace("compute", code.entry));
+        const program = createShaderProgram(preKernel(inputBufs) + code.code + postKernel(inputBufs).replace("compute", code.entry));
         const inputs = inputBufs.map((buf) => createTexture(buf));
         const output = createTexture(outputBuf)
         runProgram(program, inputs, output);
