@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple HTML with Module Import</title>
+</head>
+<body>
+    <h1>Hello glKernel!</h1>
+
+    <script type="module">
+        import { glKernel } from '../src/index.js';
+
+        const elementwiseAdd = `
+            float add(in sampler2D data0, in sampler2D data1, int idx) {
+                return read(data0, idx) + read(data1, idx);
+            }
+        `
+        const a = new Float32Array([0.5, 0.5]);
+        const b = new Float32Array([1.6, 1.6]);
+        const out = new Float32Array(2);
+        glKernel.compute({ entry: "add", code: elementwiseAdd }, [a, b], out);
+        console.log(out);
+    </script>
+</body>
+</html>

@@ -1,8 +1,26 @@
 const gl = document.createElement("canvas").getContext("webgl2");
+const preKernel = `#version 300 es
+    precision highp float;
+    in vec2 uv;
+    uniform int w;
+    uniform sampler2D data0;
+    uniform sampler2D data1;
+    out float out_data;
+
+    float read(in sampler2D data, int idx) {
+        return texture(data, vec2(float(float(int(idx)%textureSize(data, 0).x) + 0.5f)/float(textureSize(data, 0).x), float(float(int(idx)/textureSize(data, 0).x) + 0.5f)/float(textureSize(data0, 0).y))).r;
+    }
+`
+const postKernel = `
+    void main() {
+        int idx0 = int(gl_FragCoord.y-0.5f) * w + int(gl_FragCoord.x-0.5f);
+        out_data = compute(data0, data1, idx0);
+    }
+`
 
 const createShaderProgram = (code) => {
-    const vertexShader = loadShader(gl, gl.VERTEX_SHADER, '#version 300 es\nin vec2 in_position;in vec2 in_uv;out vec2 uv;void main(){gl_Position=vec4(in_position,0.0,1.0);uv=in_uv;}');
-    const fragmentShader = loadShader(gl, gl.FRAGMENT_SHADER, code);
+    const vertexShader = loadShader(gl.VERTEX_SHADER, '#version 300 es\nin vec2 in_position;in vec2 in_uv;out vec2 uv;void main(){gl_Position=vec4(in_position,0.0,1.0);uv=in_uv;}');
+    const fragmentShader = loadShader(gl.FRAGMENT_SHADER, code);
     const shaderProgram = gl.createProgram();
     gl.attachShader(shaderProgram, vertexShader);
     gl.attachShader(shaderProgram, fragmentShader);
@@ -52,32 +70,32 @@ const setupVertexData = (program, vertices) => {
     return vao;
 }
 
-const runProgram = (kernelName, program, textures) => {
+const runProgram = (program, inputs, output) => {
+    console.log(inputs);
+    console.log(output);
     let framebuffer = gl.createFramebuffer();
     gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
-    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, textures[0].tex, 0);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, output.tex, 0);
     gl.useProgram(program);
-    gl.uniform1i(gl.getUniformLocation(program, "w"), textures[0].width);  
 
-    const vao = setupVertexData(gl, program, [-1, 1, 0, 1, -1, -1, 0, 0, 1, 1, 1, 1, 1, -1, 1, 0]);
+    gl.uniform1i(gl.getUniformLocation(program, "w"), output.width);  
+    const vao = setupVertexData(program, [-1, 1, 0, 1, -1, -1, 0, 0, 1, 1, 1, 1, 1, -1, 1, 0]);
     gl.bindVertexArray(vao);
-    // Texture 0 is the framebuffer texture, so we skip that
-    for (let i = 1; i < textures.length; i++) {
-        gl.activeTexture(gl.TEXTURE0 + i-1);
-        gl.bindTexture(gl.TEXTURE_2D, textures[i].tex);
-        gl.uniform1i(gl.getUniformLocation(program, 'data' + i), i-1);
+
+    for (let i = 0; i < inputs.length; i++) {
+        gl.activeTexture(gl.TEXTURE0 + i);
+        gl.bindTexture(gl.TEXTURE_2D, inputs[i].tex);
+        gl.uniform1i(gl.getUniformLocation(program, 'data' + i), i);
     }
 
-    gl.viewport(0, 0, textures[0].width, textures[0].height);
+    gl.viewport(0, 0, output.width, output.height);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
-    for (let i = 1; i < textures.length; i++) {
-        gl.activeTexture(gl.TEXTURE0 + i-1);
+    for (let i = 0; i < inputs.length; i++) {
+        gl.activeTexture(gl.TEXTURE0 + i);
         gl.bindTexture(gl.TEXTURE_2D, null);
     }
-
-    console.log("Finished running: " + kernelName);
 }
 
 const limitTextureDims = (size, threshold) => {
@@ -92,13 +110,7 @@ const limitTextureDims = (size, threshold) => {
     return [size, 1];
 }
 
-const updateTextureData = (texture, data, isHalf) => {
-    gl.bindTexture(gl.TEXTURE_2D, texture.tex);
-    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, texture.width, texture.height, gl.RED, (isHalf) ? gl.HALF_FLOAT : gl.FLOAT, data);
-    gl.bindTexture(gl.TEXTURE_2D, null);
-}
-
-const readTextureData = (gl, texture) => {
+const readTextureData = (texture) => {
     const framebuffer = gl.createFramebuffer();
     gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture.tex, 0);
@@ -116,30 +128,26 @@ const readTextureData = (gl, texture) => {
     return data;
 }
 
-const createTexture = (gl, size, isHalf, tensorBuffer) => {
+const createTexture = (buf) => {
     const texture = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, texture);
-    const internalFormat = gl.RGBA;
-    const texSize = limitTextureDims(size, gl.getParameter(gl.MAX_TEXTURE_SIZE));
-    let weights;
-
-    if (tensorBuffer != null) {
-        if (!isHalf)
-        weights = new Float32Array(tensorBuffer.buffer, tensorBuffer.byteOffset, tensorBuffer.byteLength / Float32Array.BYTES_PER_ELEMENT);
-        else 
-        weights = new Uint16Array(tensorBuffer.buffer, tensorBuffer.byteOffset, tensorBuffer.byteLength / Uint16Array.BYTES_PER_ELEMENT);
-    } else {
-        if (!isHalf)
-        weights = new Float32Array(size).fill(0.0);
-        else
-        weights = new Uint16Array(size).fill(0.0);
-    }
-
-    gl.texImage2D(gl.TEXTURE_2D, 0, (isHalf) ? gl.R16F : gl.R32F, texSize[0], texSize[1], 0, gl.RED, (isHalf) ? gl.HALF_FLOAT : gl.FLOAT, weights);
+    const texSize = limitTextureDims(buf.length, gl.getParameter(gl.MAX_TEXTURE_SIZE));
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, texSize[0], texSize[1], 0, gl.RED, gl.FLOAT, buf);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.bindTexture(gl.TEXTURE_2D, null);
     return { tex: texture, width: texSize[0], height: texSize[1] };
+}
+
+export const glKernel = {
+    compute: (code, inputBufs, outputBuf) => {
+        const ext = gl.getExtension('EXT_color_buffer_float');
+        const program = createShaderProgram(preKernel + code.code + postKernel.replace("compute", code.entry));
+        const inputs = inputBufs.map((buf) => createTexture(buf));
+        const output = createTexture(outputBuf)
+        runProgram(program, inputs, output);
+        outputBuf.set(readTextureData(output), 0);
+    }
 }
